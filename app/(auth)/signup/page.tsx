@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   createUserWithEmailAndPassword,
   updateProfile,
@@ -10,101 +10,55 @@ import {
   signInWithPopup,
 } from 'firebase/auth';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
-// ⬇️ adjust these import paths if needed
 import { auth, db } from '../../../firebase';
 import { createSessionCookie } from '@/client/utils/createSessionCookie';
 
-export default async function SignupPage() {
+export default function SignupPage() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [err, setErr] = useState('');
   const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState('');
   const router = useRouter();
-  const params = useSearchParams();
-
-  // Optional invite deep link (?orgId=...&role=client|worker)
-  const inviteOrgId = params.get('orgId');
-  const inviteRole = (params.get('role') as 'owner' | 'worker' | 'client' | null) ?? null;
-
-  useEffect(() => {
-    // Use device language for auth emails
-    // @ts-ignore
-    auth.useDeviceLanguage?.();
-  }, []);
-
-  async function materializeProfile(uid: string, displayName?: string) {
-    await setDoc(
-      doc(db, 'profiles', uid),
-      {
-        displayName: displayName || name || null,
-        email,
-        createdAt: serverTimestamp(),
-        invite: inviteOrgId ? { orgId: inviteOrgId, role: inviteRole || 'client' } : null,
-      },
-      { merge: true }
-    );
-  }
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setErr('');
     setLoading(true);
     try {
-      const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
+      const cred = await createUserWithEmailAndPassword(auth, email, password);
       if (name) await updateProfile(cred.user, { displayName: name });
-      await materializeProfile(cred.user.uid, name);
 
-      // Send verification (don’t block UI on errors)
-      const actionCodeSettings = {
-        url: `${window.location.origin}/login`,
-        handleCodeInApp: false,
-      };
-      sendEmailVerification(cred.user, actionCodeSettings).catch((err) => {
-        console.error('sendEmailVerification failed:', err);
-      });
+      // create a profile doc (optional)
+      await setDoc(doc(db, 'profiles', cred.user.uid), {
+        displayName: name || null,
+        email: email || null,
+        createdAt: serverTimestamp(),
+      }, { merge: true });
 
-      // Go to verify page; after the user confirms, your /verify page routes to /pending or /dashboard
-      router.replace('/verify');
+      await sendEmailVerification(cred.user);
+      await createSessionCookie(); // bootstraps owner if allowlisted
+      router.push('/verify');
     } catch (e: any) {
-      console.error('email signup error', e);
-      setErr(e?.message || 'Sign-up failed');
+      setErr(e?.message || 'Failed to create account');
+    } finally {
       setLoading(false);
     }
   }
 
-  // If user signs up with Google, email is already verified → still need owner approval
   async function onGoogle() {
     setErr('');
     setLoading(true);
     try {
-      const provider = new GoogleAuthProvider();
-      const cred = await signInWithPopup(auth, provider);
-      await materializeProfile(cred.user.uid, cred.user.displayName || undefined);
-
-      // Set the session cookie so server can authorize API/layouts immediately
-      const idToken = await cred.user.getIdToken(true);
-      await fetch('/api/auth/session', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ idToken }),
-      });
-
-      const token = await cred.user.getIdTokenResult(true);
-      const role = token.claims.role as string | undefined;
-      const orgId = token.claims.orgId as string | undefined;
-      router.replace(!role || !orgId ? '/pending' : '/dashboard');
+      await signInWithPopup(auth, new GoogleAuthProvider());
+      await createSessionCookie();
+      router.push('/verify');
     } catch (e: any) {
-      console.error('google signup error', e);
-      setErr(e?.message || 'Google sign-up failed');
+      setErr(e?.message || 'Failed with Google');
+    } finally {
       setLoading(false);
     }
   }
-
-  await createSessionCookie();
-  await routeByClaims();
-
-  
 
   return (
     <div className="max-w-md mx-auto p-6 space-y-4">
@@ -112,41 +66,13 @@ export default async function SignupPage() {
       {err && <div className="text-red-600 text-sm">{err}</div>}
 
       <form onSubmit={onSubmit} className="space-y-3">
-        <input
-          className="w-full border rounded p-2"
-          placeholder="Full name"
-          value={name}
-          onChange={(e)=>setName(e.target.value)}
-        />
-        <input
-          className="w-full border rounded p-2"
-          type="email"
-          placeholder="Email"
-          value={email}
-          onChange={(e)=>setEmail(e.target.value)}
-          required
-        />
-        <input
-          className="w-full border rounded p-2"
-          type="password"
-          placeholder="Password (min 6)"
-          value={password}
-          onChange={(e)=>setPassword(e.target.value)}
-          required
-        />
-        <button
-          disabled={loading}
-          className="w-full px-4 py-2 rounded bg-black text-white"
-        >
-          {loading ? 'Creating…' : 'Sign up'}
-        </button>
+        <input className="w-full border rounded p-2" placeholder="Full name" value={name} onChange={e => setName(e.target.value)} />
+        <input className="w-full border rounded p-2" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} />
+        <input className="w-full border rounded p-2" placeholder="Password" type="password" value={password} onChange={e => setPassword(e.target.value)} />
+        <button disabled={loading} className="w-full rounded bg-black text-white py-2">{loading ? 'Creating…' : 'Create account'}</button>
       </form>
 
-      <button
-        onClick={onGoogle}
-        disabled={loading}
-        className="w-full border rounded py-2"
-      >
+      <button onClick={onGoogle} disabled={loading} className="w-full border rounded py-2">
         Continue with Google
       </button>
 
@@ -156,7 +82,3 @@ export default async function SignupPage() {
     </div>
   );
 }
-function routeByClaims() {
-  throw new Error('Function not implemented.');
-}
-

@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { adminAuth } from "../../../../functions/lib/firebaseAdmin";
 
 export const runtime = "nodejs";
-
 type Role = "owner" | "worker" | "client";
 
 export async function POST(req: NextRequest) {
@@ -16,9 +15,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Owners only" }, { status: 403 });
     }
 
-    const { uid, role, orgId } = (await req.json()) as {
-      uid: string; role: Role; orgId: string;
-    };
+    const { uid, role, orgId } = (await req.json()) as { uid: string; role: Role; orgId: string; };
     if (!uid || !role || !orgId) {
       return NextResponse.json({ error: "uid, role, orgId required" }, { status: 400 });
     }

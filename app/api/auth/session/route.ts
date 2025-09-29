@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { adminAuth } from "../../../../functions/lib/firebaseAdmin"; // ⬅️ adjust if needed
+import { adminAuth } from "../../../../functions/lib/firebaseAdmin";
 
 const COOKIE_NAME = "__session";
 export const runtime = "nodejs";
@@ -16,7 +16,7 @@ function setCookie(res: NextResponse, value: string, maxAgeSec: number) {
     name: COOKIE_NAME,
     value,
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production", // ✅ allow on localhost
+    secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     path: "/",
     maxAge: maxAgeSec,
@@ -25,40 +25,27 @@ function setCookie(res: NextResponse, value: string, maxAgeSec: number) {
 
 export async function POST(req: NextRequest) {
   try {
-    const { idToken } = (await req.json()) as { idToken?: string };
+    const { idToken } = await req.json();
     if (!idToken) return NextResponse.json({ error: "Missing idToken" }, { status: 400 });
 
-    // Decode current token (to read email/claims)
     const decoded = await adminAuth.verifyIdToken(idToken, true);
-    const { uid, email, email_verified } = decoded as any;
+    const email = (decoded as any).email as string | undefined;
+    const uid = decoded.uid;
 
-    const allowlist = parseAllowlist();
-    const ORG_ID = process.env.ORG_ID || "ctrly-agency";
+    // Bootstrap owner from allowlist
+    const allow = parseAllowlist();
+    const orgId = process.env.NEXT_PUBLIC_ORG_ID || "ctrly-agency";
+    const role = (decoded as any).role as string | undefined;
 
-    // If the user is allowlisted owner AND verified, ensure owner claims
-    const shouldBeOwner =
-      email_verified && email && allowlist.includes(String(email).toLowerCase());
-
-    if (shouldBeOwner && (decoded.role !== "owner" || decoded.orgId !== ORG_ID)) {
-      await adminAuth.setCustomUserClaims(uid, { role: "owner", orgId: ORG_ID });
-      // Force a refresh so the session cookie we mint reflects the new claims
-      await adminAuth.revokeRefreshTokens(uid);
+    if (email && allow.includes(email.toLowerCase()) && role !== "owner") {
+      await adminAuth.setCustomUserClaims(uid, { role: "owner", orgId });
     }
 
-    // Re-verify to pick up fresh claims if we just promoted
-    const fresh = await adminAuth.verifyIdToken(idToken, true);
-
-    // Create session cookie (7 days)
-    const expiresInMs = 7 * 24 * 60 * 60 * 1000;
+    // Mint session cookie
+    const expiresInMs = 1000 * 60 * 60 * 24 * 5; // 5 days
     const sessionCookie = await adminAuth.createSessionCookie(idToken, { expiresIn: expiresInMs });
 
-    const res = NextResponse.json({
-      ok: true,
-      email: fresh.email,
-      role: (fresh as any).role ?? null,
-      orgId: (fresh as any).orgId ?? null,
-      email_verified: (fresh as any).email_verified ?? false,
-    });
+    const res = NextResponse.json({ ok: true });
     setCookie(res, sessionCookie, Math.floor(expiresInMs / 1000));
     return res;
   } catch (e: any) {
@@ -69,15 +56,6 @@ export async function POST(req: NextRequest) {
 
 export async function DELETE() {
   const res = NextResponse.json({ ok: true });
-  // Clear cookie
-  res.cookies.set({
-    name: COOKIE_NAME,
-    value: "",
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/",
-    maxAge: 0,
-  });
+  setCookie(res, "", 0);
   return res;
 }

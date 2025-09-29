@@ -1,13 +1,14 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { adminAuth } from "../../../../functions/lib/firebaseAdmin";     // ✅ use app lib
+import { adminAuth } from "../../../../functions/lib/firebaseAdmin";
 import { getFirestore } from "firebase-admin/firestore";
 
 export const runtime = "nodejs";
 
 export async function GET() {
   try {
-    const session = (await cookies()).get("__session")?.value; // ✅ no await
+    const cookieStore = await cookies();                 // ✅ await
+    const session = cookieStore.get("__session")?.value; // ✅ then get()
     if (!session) return NextResponse.json({ error: "Unauthorized: no session cookie" }, { status: 401 });
 
     const decoded = await adminAuth.verifySessionCookie(session, true);

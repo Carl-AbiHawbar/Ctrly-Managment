@@ -1,12 +1,13 @@
 import { ReactNode } from "react";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { adminAuth } from "../../functions/lib/firebaseAdmin"; // ✅ use app/lib
+import { adminAuth } from "../../functions/lib/firebaseAdmin";
 
 export const runtime = "nodejs";
 
 export default async function DashboardLayout({ children }: { children: ReactNode }) {
-  const session = (await cookies()).get("__session")?.value; // ✅ no await
+  const cookieStore = await cookies();                 // ✅ await (Next 15)
+  const session = cookieStore.get("__session")?.value; // ✅ then get()
   if (!session) redirect("/login");
 
   try {

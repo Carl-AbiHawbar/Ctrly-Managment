@@ -1,5 +1,5 @@
 // lib/setUserRole.ts (client-side helper)
-import {auth} from "@/firebase"; // your client SDK init
+import {auth} from "@/firebase";
 
 export async function setUserRole(params: {
   uid: string;
