@@ -39,6 +39,7 @@ import avatar1 from "@/public/avatars/alex-morgan.png";
 import avatar2 from "@/public/avatars/david-kim.png";
 import avatar3 from "@/public/avatars/alex-morgan.png";
 import Image from "next/image";
+import LogoutItem from "@/components/LogoutItem";
 
 export default function MessagePage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -97,10 +98,9 @@ export default function MessagePage() {
                       <span>Appearance</span>
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
-                    <DropdownMenuItem>
-                      <LogOut className="mr-2 h-4 w-4" />
-                      <span>Log out</span>
-                    </DropdownMenuItem>
+                    <DropdownMenuContent>
+                      <LogoutItem />
+                    </DropdownMenuContent>
                   </DropdownMenuContent>
                 </DropdownMenu>
               </div>

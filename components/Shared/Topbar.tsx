@@ -7,7 +7,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "../ui/button";
-import { Bell, LogOut, Menu, Plus, Settings } from "lucide-react";
+import { Bell, LogOut, LogIn, Menu, Plus, Settings } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "../ui/avatar";
 import { Dispatch, SetStateAction } from "react";
 
@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/dialog";
 import NewProjectModal from "./NewProjectModal";
 import Link from "next/link";
+import LogoutItem from "../LogoutItem";
 
 type topbarPropsT = {
   name: string;
@@ -75,10 +76,9 @@ const Topbar = ({ name, sidebarOpen, setSidebarOpen }: topbarPropsT) => {
                 <Settings className="mr-2 h-4 w-4" />
                 <span>Settings</span>
               </DropdownMenuItem>
-              <DropdownMenuItem>
-                <LogOut className="mr-2 h-4 w-4" />
-                <span>Log out</span>
-              </DropdownMenuItem>
+              <DropdownMenuContent>
+                <LogoutItem />
+              </DropdownMenuContent>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>

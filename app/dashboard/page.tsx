@@ -4,7 +4,7 @@ import Topbar from "@/components/Shared/Topbar";
 import Sidebar from "@/components/sidebar";
 import { useState } from "react";
 
-export default function MyTasksPage() {
+export default function dashboard() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   return (
     <div className="bg-gray-50">

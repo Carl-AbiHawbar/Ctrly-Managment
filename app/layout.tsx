@@ -6,8 +6,8 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Taskora - Project Management Dashboard UI Kit",
-  description: "A clean, modern Project Management Dashboard Ui kit",
+  title: "Ctrly Management",
+  description: "Managment Ctrly Agency",
 };
 
 export default function RootLayout({
