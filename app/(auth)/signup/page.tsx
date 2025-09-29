@@ -29,7 +29,6 @@ export default function SignupPage() {
       const cred = await createUserWithEmailAndPassword(auth, email, password);
       if (name) await updateProfile(cred.user, { displayName: name });
 
-      // create a profile doc (optional)
       await setDoc(doc(db, 'profiles', cred.user.uid), {
         displayName: name || null,
         email: email || null,
@@ -37,7 +36,7 @@ export default function SignupPage() {
       }, { merge: true });
 
       await sendEmailVerification(cred.user);
-      await createSessionCookie(); // bootstraps owner if allowlisted
+      await createSessionCookie(); // bootstrap owner if allowlisted
       router.push('/verify');
     } catch (e: any) {
       setErr(e?.message || 'Failed to create account');

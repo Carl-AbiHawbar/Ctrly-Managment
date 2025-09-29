@@ -6,8 +6,8 @@ import { adminAuth } from "../../functions/lib/firebaseAdmin";
 export const runtime = "nodejs";
 
 export default async function DashboardLayout({ children }: { children: ReactNode }) {
-  const cookieStore = await cookies();                 // ✅ await (Next 15)
-  const session = cookieStore.get("__session")?.value; // ✅ then get()
+  const cookieStore = await cookies();
+  const session = cookieStore.get("__session")?.value;
   if (!session) redirect("/login");
 
   try {
