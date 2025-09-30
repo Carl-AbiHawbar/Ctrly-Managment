@@ -1,0 +1,37 @@
+// Firestore Rules for CTRLY CRM
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function role() { return request.auth.token.role; }
+    function uid() { return request.auth.uid; }
+
+    match /users/{userId} {
+      allow read, write: if signedIn() && userId == uid();
+    }
+
+    match /projects/{projectId} {
+      allow read: if signedIn() && (
+        role() in ['owner','admin','manager'] ||
+        (role() in ['worker','client'] && (resource.data.members.hasOnly([uid()]) || request.resource.data.members.hasOnly([uid()]))) 
+      );
+      allow create: if signedIn() && role() in ['owner','admin'];
+      allow update, delete: if signedIn() && (
+        role() in ['owner','admin','manager'] ||
+        (role() in ['worker','client'] && (resource.data.writers.hasOnly([uid()]) || request.resource.data.writers.hasOnly([uid()]))) 
+      );
+      
+      match /{sub=**} {
+        allow read, write: if signedIn() && (
+          role() in ['owner','admin','manager'] ||
+          (role() in ['worker','client'] && get(/databases/$(database)/documents/projects/$(projectId)).data.members.hasOnly([uid()]))
+        );
+      }
+    }
+
+    match /activity/{docId} {
+      allow read: if signedIn();
+      allow write: if false;
+    }
+  }
+}
