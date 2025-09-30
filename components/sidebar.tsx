@@ -127,10 +127,10 @@ export function Sidebar({ open, setOpen }: SidebarProps) {
         {/* Sidebar header - fixed at top */}
         <div className="h-16 flex items-center justify-between px-4 border-b border-gray-200">
           <Link href="/" className="flex items-center">
-            <div className="w-8 h-8 rounded-md bg-blue-600 flex items-center justify-center text-white font-bold mr-2">
-              T
+            <div className="w-18 h-18 mr-2">
+              <img src="ctrly.png" />
             </div>
-            <span className="text-xl font-semibold">Taskora</span>
+            <span className="text-xl font-semibold">CTRLY MANAGMENT</span>
           </Link>
           <Button
             variant="ghost"

@@ -45,7 +45,7 @@ export function AppSidebar() {
       <div className="flex h-14 items-center px-4 border-b">
         <Link href="/" className="flex items-center gap-2">
           <Home className="h-6 w-6" />
-          {!collapsed && <span className="font-bold text-xl">Taskora</span>}
+          {!collapsed && <span className="font-bold text-xl">CTRLY MANAGMENT</span>}
         </Link>
         <Button variant="ghost" size="icon" className="ml-auto" onClick={() => setCollapsed(!collapsed)}>
           <Menu className="h-5 w-5" />
