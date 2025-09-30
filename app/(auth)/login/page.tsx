@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { signInWithEmailAndPassword, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
-import { auth } from '../../../firebase';
+import { auth } from '@/firebase';
 import { createSessionCookie } from '@/client/utils/createSessionCookie';
 
 export default function LoginPage() {
@@ -15,7 +15,7 @@ export default function LoginPage() {
 
   async function finish() {
     await createSessionCookie();
-    router.push('/dashboard');
+    router.push('/dashboard'); // server will gate based on verification/role
   }
 
   async function onSubmit(e: React.FormEvent) {
@@ -26,7 +26,7 @@ export default function LoginPage() {
       await signInWithEmailAndPassword(auth, email, password);
       await finish();
     } catch (e: any) {
-      setErr(e?.message || 'Failed to sign in');
+      setErr(e?.message || 'Sign-in failed');
     } finally {
       setLoading(false);
     }
@@ -36,10 +36,11 @@ export default function LoginPage() {
     setErr('');
     setLoading(true);
     try {
-      await signInWithPopup(auth, new GoogleAuthProvider());
+      const provider = new GoogleAuthProvider();
+      await signInWithPopup(auth, provider);
       await finish();
     } catch (e: any) {
-      setErr(e?.message || 'Failed to sign in with Google');
+      setErr(e?.message || 'Google sign-in failed');
     } finally {
       setLoading(false);
     }
