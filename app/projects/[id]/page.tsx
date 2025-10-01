@@ -1,99 +1,128 @@
 "use client";
-import React from "react";
-import app from "@/firebase";
-import { getAuth, onIdTokenChanged } from "firebase/auth";
+import React, { useEffect, useState } from "react";
+import { auth } from "@/firebase";
+import { onIdTokenChanged } from "firebase/auth";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 
-const API = (path:string, t:string, init?:RequestInit) =>
-  fetch(path, { ...(init||{}), headers: { ...(init?.headers||{}), authorization: `Bearer ${t}`, "content-type": "application/json" } }).then(r=>r.json());
+const API = (path: string, t: string, init?: RequestInit) =>
+  fetch(path, { ...(init||{}), headers: { ...(init?.headers||{}), "authorization": `Bearer ${t}`, "content-type": "application/json" } }).then(r=>r.json());
 
 export default function ProjectView({ params }: any){
-  const [token, setToken] = React.useState<string|null>(null);
-  const [project, setProject] = React.useState<any>(null);
-  const [tasks, setTasks] = React.useState<any[]>([]);
-  const [title, setTitle] = React.useState("");
-  const [assignees, setAssignees] = React.useState<string[]>([]);
-  const [users, setUsers] = React.useState<any[]>([]);
-  const [error, setError] = React.useState<string|null>(null);
+  const [token, setToken] = useState<string|null>(null);
+  const [project, setProject] = useState<any>(null);
+  const [tasks, setTasks] = useState<any[]>([]);
+  const [tickets, setTickets] = useState<any[]>([]);
+  const [title, setTitle] = useState("");
+  const [desc, setDesc] = useState("");
 
-  React.useEffect(()=>{
-    const auth = getAuth(app);
-    return onIdTokenChanged(auth, async (u)=>{
-      if (!u) return setToken(null);
-      const t = await u.getIdToken();
+  useEffect(() => {
+    const unsub = onIdTokenChanged(auth, async (u) => {
+      if (!u) { setToken(null); return; }
+      const t = await u.getIdToken(true);
       setToken(t);
     });
-  },[]);
+    return () => unsub();
+  }, []);
 
-  const load = React.useCallback(async()=>{
+  useEffect(() => {
     if (!token) return;
-    setError(null);
-    const p = await API(`/api/projects/${params.id}`, token);
-    if (p.error) { setError(p.error); return; }
-    setProject(p);
-    const t = await API(`/api/projects/${params.id}/tasks`, token);
-    setTasks(t.items || []);
-    const u = await API(`/api/users`, token);
-    setUsers(u.items || []);
-  },[token, params.id]);
+    (async () => {
+      const p = await API(`/api/projects/${params.id}`, token);
+      setProject(p);
+      const ts = await API(`/api/projects/${params.id}/tasks`, token);
+      setTasks(ts.rows || []);
+      const ks = await API(`/api/projects/${params.id}/tickets`, token);
+      setTickets(ks.rows || []);
+    })();
+  }, [token, params.id]);
 
-  React.useEffect(()=>{ load(); }, [load]);
-
-  async function createTask(e:React.FormEvent){
-    e.preventDefault();
-    if (!token || !title) return;
-    const res = await API(`/api/projects/${params.id}/tasks`, token, { method: "POST", body: JSON.stringify({ title, assignees })});
-    if (!res.error) { setTitle(""); setAssignees([]); load(); }
+  async function addTask() {
+    if (!title.trim()) return;
+    const t = await API(`/api/projects/${params.id}/tasks`, token!, { method: "POST", body: JSON.stringify({ title, description: desc }) });
+    setTasks([t, ...tasks]);
+    setTitle(""); setDesc("");
+  }
+  async function setTaskStatus(id: string, status: string) {
+    const upd = await API(`/api/projects/${params.id}/tasks/${id}`, token!, { method: "PATCH", body: JSON.stringify({ status }) });
+    setTasks(tasks.map(x => x.id === id ? upd : x));
   }
 
-  async function setStatus(taskId:string, status:string){
-    if (!token) return;
-    const res = await API(`/api/projects/${params.id}/tasks/${taskId}`, token, { method:"PATCH", body: JSON.stringify({ status })});
-    if (!res.error) load();
+  async function addTicket() {
+    if (!title.trim()) return;
+    const k = await API(`/api/projects/${params.id}/tickets`, token!, { method: "POST", body: JSON.stringify({ title, description: desc }) });
+    setTickets([k, ...tickets]);
+    setTitle(""); setDesc("");
+  }
+  async function setTicketStatus(id: string, status: string) {
+    const upd = await API(`/api/projects/${params.id}/tickets/${id}`, token!, { method: "PATCH", body: JSON.stringify({ status }) });
+    setTickets(tickets.map(x => x.id === id ? upd : x));
   }
 
-  function toggleAssignee(uid:string){
-    setAssignees(prev => prev.includes(uid) ? prev.filter(x=>x!==uid) : [...prev, uid]);
-  }
+  if (!project) return <div className="p-6">Loading…</div>;
 
   return (
-    <div className="p-6 space-y-6">
-      <h1 className="text-2xl font-bold">{project?.name || "Project"}</h1>
-      {error && <p className="text-red-600">Error: {error}</p>}
+    <div className="max-w-5xl mx-auto p-4 space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-semibold">{project.name}</h1>
+        <div className="text-sm text-muted-foreground">Status: {project.status}</div>
+      </div>
+      <p className="text-muted-foreground">{project.description}</p>
 
-      <form onSubmit={createTask} className="space-y-3 border rounded-2xl p-4">
-        <input className="border rounded p-2 w-full" placeholder="New task title" value={title} onChange={e=>setTitle(e.target.value)} />
-        <div>
-          <div className="text-sm font-medium mb-1">Assign to</div>
-          <div className="flex flex-wrap gap-2">
-            {(users||[]).filter((u:any)=> (project?.members||[]).includes(u.id)).map((u:any)=>(
-              <button type="button" key={u.id} onClick={()=>toggleAssignee(u.id)}
-                className={`px-3 py-1 border rounded ${assignees.includes(u.id)?'bg-black text-white':''}`}>
-                {u.email || u.id}
-              </button>
-            ))}
+      <div className="grid md:grid-cols-2 gap-6">
+        <div className="space-y-3">
+          <h2 className="font-medium">Tasks</h2>
+          <div className="flex gap-2">
+            <Input placeholder="Task title" value={title} onChange={e => setTitle(e.target.value)} />
+            <Button onClick={addTask}>Add</Button>
           </div>
+          <Textarea placeholder="Description (optional)" value={desc} onChange={e => setDesc(e.target.value)} />
+          <ul className="space-y-2">
+            {tasks.map(t => (
+              <li key={t.id} className="border rounded p-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="font-medium">{t.title}</div>
+                    <div className="text-xs text-muted-foreground">{t.status}</div>
+                  </div>
+                  <div className="flex gap-2">
+                    {["todo","doing","done"].map(s => (
+                      <Button key={s} size="sm" variant={t.status===s?"default":"outline"} onClick={()=>setTaskStatus(t.id, s)}>{s}</Button>
+                    ))}
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
         </div>
-        <button className="px-4 py-2 rounded bg-black text-white">Add Task</button>
-      </form>
 
-      <h2 className="font-semibold">Tasks</h2>
-      <ul className="grid gap-2">
-        {tasks.map(t => (
-          <li key={t.id} className="border rounded p-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="font-semibold">{t.title}</div>
-                <div className="text-xs opacity-70">Assignees: {(t.assignees||[]).length ? (t.assignees||[]).join(", ") : "—"}</div>
-              </div>
-              <div className="flex gap-2">
-                {["todo","doing","done"].map(s => (
-                  <button key={s} className={`px-2 py-1 border rounded ${t.status===s?'bg-black text-white':''}`} onClick={()=>setStatus(t.id, s)}>{s}</button>
-                ))}
-              </div>
-            </div>
-          </li>
-        ))}
-      </ul>
+        <div className="space-y-3">
+          <h2 className="font-medium">Tickets</h2>
+          <div className="flex gap-2">
+            <Input placeholder="Ticket title" value={title} onChange={e => setTitle(e.target.value)} />
+            <Button onClick={addTicket}>Open</Button>
+          </div>
+          <Textarea placeholder="Description (optional)" value={desc} onChange={e => setDesc(e.target.value)} />
+          <ul className="space-y-2">
+            {tickets.map(t => (
+              <li key={t.id} className="border rounded p-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="font-medium">{t.title}</div>
+                    <div className="text-xs text-muted-foreground">{t.status}</div>
+                  </div>
+                  <div className="flex gap-2">
+                    {["open","in_progress","closed"].map(s => (
+                      <Button key={s} size="sm" variant={t.status===s?"default":"outline"} onClick={()=>setTicketStatus(t.id, s)}>{s.replace("_"," ")}</Button>
+                    ))}
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
     </div>
   );
 }

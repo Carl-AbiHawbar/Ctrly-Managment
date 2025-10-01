@@ -5,33 +5,74 @@ service cloud.firestore {
     function signedIn() { return request.auth != null; }
     function role() { return request.auth.token.role; }
     function uid() { return request.auth.uid; }
+    function orgId() { return request.auth.token.orgId; }
 
+    // Each user can read/write their own user doc
     match /users/{userId} {
       allow read, write: if signedIn() && userId == uid();
     }
 
+    // Profiles: created at signup; readable by the owner to approve; users can read their own
+    match /profiles/{userId} {
+      allow read: if signedIn() && (userId == uid() || role() == 'owner');
+      allow write: if signedIn() && userId == uid();
+    }
+
+    // Projects and subcollections
     match /projects/{projectId} {
-      allow read: if signedIn() && (
+      allow read: if signedIn() && resource.data.orgId == orgId() && (
         role() in ['owner','admin','manager'] ||
-        (role() in ['worker','client'] && (resource.data.members.hasOnly([uid()]) || request.resource.data.members.hasOnly([uid()]))) 
+        (role() in ['worker','client'] && (resource.data.members != null && resource.data.members.hasAny([uid()])))
       );
-      allow create: if signedIn() && role() in ['owner','admin'];
-      allow update, delete: if signedIn() && (
+      allow create: if signedIn() && request.resource.data.orgId == orgId() && role() in ['owner','admin','manager'];
+      allow update, delete: if signedIn() && resource.data.orgId == orgId() && (
         role() in ['owner','admin','manager'] ||
-        (role() in ['worker','client'] && (resource.data.writers.hasOnly([uid()]) || request.resource.data.writers.hasOnly([uid()]))) 
+        (role() == 'worker' && resource.data.writers != null && resource.data.writers.hasAny([uid()]))
       );
-      
-      match /{sub=**} {
-        allow read, write: if signedIn() && (
+
+      // Tasks under project
+      match /tasks/{taskId} {
+        allow read: if signedIn() && get(/databases/$(database)/documents/projects/$(projectId)).data.orgId == orgId() && (
           role() in ['owner','admin','manager'] ||
-          (role() in ['worker','client'] && get(/databases/$(database)/documents/projects/$(projectId)).data.members.hasOnly([uid()]))
+          (role() in ['worker','client'] && get(/databases/$(database)/documents/projects/$(projectId)).data.members.hasAny([uid()]))
+        );
+        allow create, update, delete: if signedIn() && get(/databases/$(database)/documents/projects/$(projectId)).data.orgId == orgId() && (
+          role() in ['owner','admin','manager'] ||
+          (role() == 'worker' && get(/databases/$(database)/documents/projects/$(projectId)).data.writers.hasAny([uid()]))
+        );
+      }
+
+      // Tickets under project
+      match /tickets/{ticketId} {
+        allow read: if signedIn() && get(/databases/$(database)/documents/projects/$(projectId)).data.orgId == orgId() && (
+          role() in ['owner','admin','manager'] ||
+          (role() in ['worker','client'] && get(/databases/$(database)/documents/projects/$(projectId)).data.members.hasAny([uid()]))
+        );
+        allow create, update, delete: if signedIn() && get(/databases/$(database)/documents/projects/$(projectId)).data.orgId == orgId() && (
+          role() in ['owner','admin','manager'] ||
+          (role() == 'worker' && get(/databases/$(database)/documents/projects/$(projectId)).data.writers.hasAny([uid()]))
         );
       }
     }
 
-    match /activity/{docId} {
-      allow read: if signedIn();
-      allow write: if false;
+    // Events (calendar): org-scoped
+    match /events/{eventId} {
+      allow read: if signedIn() && resource.data.orgId == orgId();
+      allow create: if signedIn() && request.resource.data.orgId == orgId();
+      allow update, delete: if signedIn() && resource.data.orgId == orgId() && (
+        role() in ['owner','admin','manager'] || resource.data.createdBy == uid()
+      );
+    }
+
+    // Chats: doc with participants array and orgId; messages subcollection
+    match /chats/{chatId} {
+      allow read, update, delete: if signedIn() && resource.data.orgId == orgId() && resource.data.participants.hasAny([uid()]);
+      allow create: if signedIn() && request.resource.data.orgId == orgId() && request.resource.data.participants.hasAny([uid()]);
+      match /messages/{messageId} {
+        allow read: if signedIn() && get(/databases/$(database)/documents/chats/$(chatId)).data.orgId == orgId() && get(/databases/$(database)/documents/chats/$(chatId)).data.participants.hasAny([uid()]);
+        allow create: if signedIn() && get(/databases/$(database)/documents/chats/$(chatId)).data.orgId == orgId() && get(/databases/$(database)/documents/chats/$(chatId)).data.participants.hasAny([uid()]) && request.resource.data.senderId == uid();
+        allow update, delete: if false; // messages immutable
+      }
     }
   }
 }

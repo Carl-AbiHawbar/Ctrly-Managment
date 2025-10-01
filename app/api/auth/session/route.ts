@@ -16,8 +16,8 @@ function setCookie(res: NextResponse, value: string, maxAgeSec: number) {
     name: COOKIE_NAME,
     value,
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
     path: "/",
     maxAge: maxAgeSec,
   });
@@ -29,22 +29,17 @@ export async function POST(req: NextRequest) {
     if (!idToken) return NextResponse.json({ error: "Missing idToken" }, { status: 400 });
 
     const decoded = await adminAuth.verifyIdToken(idToken, true);
-    const email = (decoded as any).email as string | undefined;
-    const uid = decoded.uid;
-
-    // Bootstrap owner from allowlist
     const allow = parseAllowlist();
-    const orgId = process.env.NEXT_PUBLIC_ORG_ID || "ctrly-agency";
-    const role = (decoded as any).role as string | undefined;
 
-    if (email && allow.includes(email.toLowerCase()) && role !== "owner") {
-      await adminAuth.setCustomUserClaims(uid, { role: "owner", orgId });
+    // Bootstrap owner if allowlisted
+    const hasRole = (decoded as any).role;
+    const email = (decoded.email || "").toLowerCase();
+    if (!hasRole && email && allow.includes(email)) {
+      await adminAuth.setCustomUserClaims(decoded.uid, { role: "owner", orgId: process.env.NEXT_PUBLIC_ORG_ID || "default" });
     }
 
-    // Mint session cookie
-    const expiresInMs = 1000 * 60 * 60 * 24 * 5; // 5 days
+    const expiresInMs = 1000 * 60 * 60 * 24 * 7; // 7 days
     const sessionCookie = await adminAuth.createSessionCookie(idToken, { expiresIn: expiresInMs });
-
     const res = NextResponse.json({ ok: true });
     setCookie(res, sessionCookie, Math.floor(expiresInMs / 1000));
     return res;
