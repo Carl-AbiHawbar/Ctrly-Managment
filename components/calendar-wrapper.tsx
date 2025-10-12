@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import SimpleCalendarView from "./simple-calendar-view"
+import SimpleCalendarView from "./Simplecalendarview"
 
 interface CalendarWrapperProps {
   view: "month" | "week" | "day"

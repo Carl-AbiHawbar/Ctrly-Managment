@@ -1,84 +1,120 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   createUserWithEmailAndPassword,
   updateProfile,
-  sendEmailVerification,
-  GoogleAuthProvider,
-  signInWithPopup,
+  // GoogleAuthProvider,
+  // signInWithRedirect,
+  getRedirectResult,
+  onAuthStateChanged,
 } from 'firebase/auth';
-import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '@/firebase';
-import { createSessionCookie } from '@/client/utils/createSessionCookie';
+import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { toast } from 'sonner';
 
 export default function SignupPage() {
+  const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(false);
-  const router = useRouter();
 
-  async function afterAuth() {
-    // Post token to create session cookie and pull claims twice
-    await createSessionCookie();
-    router.push('/dashboard'); // server will redirect to /verify or /pending if needed
-  }
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, user => {
+      if (user) router.replace('/dashboard');
+    });
+    getRedirectResult(auth).catch(console.error);
+    return () => unsub();
+  }, [router]);
 
-  async function onSubmit(e: React.FormEvent) {
+  const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
     setErr('');
     setLoading(true);
     try {
-      const cred = await createUserWithEmailAndPassword(auth, email, password);
-      if (displayName) await updateProfile(cred.user, { displayName });
-      await setDoc(doc(db, 'profiles', cred.user.uid), {
-        email: cred.user.email,
-        displayName: displayName || cred.user.displayName || '',
-        createdAt: serverTimestamp(),
-      });
-      await sendEmailVerification(cred.user);
-      await afterAuth();
-    } catch (e: any) {
-      setErr(e?.message || 'Failed to create account');
-    } finally {
-      setLoading(false);
-    }
-  }
+      const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
 
-  async function onGoogle() {
-    setErr('');
-    setLoading(true);
-    try {
-      const provider = new GoogleAuthProvider();
-      const cred = await signInWithPopup(auth, provider);
-      await setDoc(doc(db, 'profiles', cred.user.uid), {
-        email: cred.user.email,
-        displayName: cred.user.displayName || '',
-        createdAt: serverTimestamp(),
-      }, { merge: true });
-      await afterAuth();
+      if (displayName) await updateProfile(cred.user, { displayName });
+
+      // Save Firestore user with orgId and role
+      await setDoc(
+        doc(db, 'users', cred.user.uid),
+        {
+          uid: cred.user.uid,
+          email: cred.user.email,
+          displayName: displayName || cred.user.displayName || '',
+          orgId: null, // can be set later when joining/creating org
+          role: 'user', // default
+          createdAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      toast.success('Account created!');
+      router.replace('/dashboard');
     } catch (e: any) {
-      setErr(e?.message || 'Google sign-in failed');
+      setErr(e.message);
+      toast.error(e.message);
     } finally {
       setLoading(false);
     }
-  }
+  };
 
   return (
     <div className="max-w-md mx-auto p-6 space-y-4">
-      <h1 className="text-2xl font-semibold">Create your account</h1>
-      {err && <div className="text-red-600 text-sm">{err}</div>}
-      <form onSubmit={onSubmit} className="space-y-3">
-        <input className="w-full border rounded p-2" placeholder="Full name" value={displayName} onChange={e => setDisplayName(e.target.value)} />
-        <input className="w-full border rounded p-2" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} />
-        <input className="w-full border rounded p-2" placeholder="Password" type="password" value={password} onChange={e => setPassword(e.target.value)} />
-        <button disabled={loading} className="w-full rounded bg-black text-white py-2">{loading ? 'Creating…' : 'Create account'}</button>
+      <h1 className="text-2xl font-semibold text-center">Create Account</h1>
+      {err && <p className="text-sm text-red-500">{err}</p>}
+
+      <form onSubmit={handleSignup} className="space-y-3">
+        <input
+          type="text"
+          placeholder="Full Name"
+          value={displayName}
+          onChange={e => setDisplayName(e.target.value)}
+          className="w-full border p-2 rounded"
+        />
+        <input
+          type="email"
+          placeholder="Email"
+          value={email}
+          onChange={e => setEmail(e.target.value)}
+          className="w-full border p-2 rounded"
+        />
+        <input
+          type="password"
+          placeholder="Password"
+          value={password}
+          onChange={e => setPassword(e.target.value)}
+          className="w-full border p-2 rounded"
+        />
+        <button
+          type="submit"
+          disabled={loading}
+          className="w-full bg-black text-white py-2 rounded"
+        >
+          {loading ? 'Creating…' : 'Sign Up'}
+        </button>
       </form>
-      <button onClick={onGoogle} disabled={loading} className="w-full border rounded py-2">Continue with Google</button>
-      <p className="text-sm">Already have an account? <a className="underline" href="/login">Sign in</a></p>
+
+      {/* Commented out Google sign-up for now
+      <button
+        onClick={handleGoogleSignup}
+        disabled={loading}
+        className="w-full border rounded py-2"
+      >
+        Continue with Google
+      </button>
+      */}
+
+      <p className="text-sm text-center">
+        Already have an account?{' '}
+        <a href="/login" className="underline font-medium">
+          Sign in
+        </a>
+      </p>
     </div>
   );
 }

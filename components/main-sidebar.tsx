@@ -35,7 +35,7 @@ export function MainSidebar() {
       <div className="h-14 flex items-center px-4 border-b">
         <Link href="/" className="flex items-center gap-2">
           <Home className="h-6 w-6" />
-          <span className="font-bold text-xl">TaskCTRLY MANAGMENTora</span>
+          <span className="font-bold text-xl">CTRLY MANAGMENT</span>
         </Link>
       </div>
       <nav className="p-4 space-y-2">

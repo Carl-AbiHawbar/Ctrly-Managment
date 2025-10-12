@@ -1,25 +1,28 @@
-import { ReactNode } from "react";
-import { cookies } from "next/headers";
-import { redirect } from "next/navigation";
-import { adminAuth } from "../../functions/lib/firebaseAdmin";
+// app/dashboard/layout.tsx
+'use client';
 
-export const runtime = "nodejs";
+import { ReactNode, useEffect, useState } from 'react';
+import { onAuthStateChanged } from 'firebase/auth';
+import { auth } from '@/firebase';
+import { useRouter } from 'next/navigation';
 
-export default async function DashboardLayout({ children }: { children: ReactNode }) {
-  const cookieStore = await cookies();
-  const session = cookieStore.get("__session")?.value;
-  if (!session) redirect("/login");
+export default function DashboardLayout({ children }: { children: ReactNode }) {
+  const router = useRouter();
+  const [ready, setReady] = useState(false);
 
-  try {
-    const decoded = await adminAuth.verifySessionCookie(session, true);
-    const emailVerified = (decoded as any).email_verified;
-    const role = (decoded as any).role;
-    const orgId = (decoded as any).orgId;
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (user) => {
+      if (!user) {
+        router.replace('/login');
+      } else {
+        setReady(true);
+      }
+    });
+    return () => unsub();
+  }, [router]);
 
-    if (!emailVerified) redirect("/verify");
-    if (!role || !orgId) redirect("/pending");
-  } catch {
-    redirect("/login");
+  if (!ready) {
+    return <div className="p-6 text-sm">Loading…</div>;
   }
 
   return <>{children}</>;

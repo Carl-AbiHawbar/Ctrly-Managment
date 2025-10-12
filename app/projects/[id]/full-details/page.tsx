@@ -6,5 +6,5 @@ export default async function ProjectFullDetailsPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  return <ProjectFullDetails projectId={id} />;
+  return <ProjectFullDetails  />;
 }

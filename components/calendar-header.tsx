@@ -130,7 +130,7 @@ export default function CalendarHeader({
   return (
     <div className="bg-white border-b border-gray-200 sticky top-0 z-10">
       <Topbar
-        name="Calender"
+        name="Calendar"
         sidebarOpen={sidebarOpen}
         setSidebarOpen={setSidebarOpen}
       />
