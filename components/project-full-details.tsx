@@ -15,6 +15,8 @@ import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 import { Calendar, Clock, FileText, CheckSquare, Users } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -32,7 +34,6 @@ import {
   query,
   serverTimestamp,
   updateDoc,
-  where,
 } from 'firebase/firestore';
 
 type UserDoc = {
@@ -95,6 +96,13 @@ export default function ProjectPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [newTitle, setNewTitle] = useState('');
   const [newDesc, setNewDesc] = useState('');
+
+  // assignment pickers
+  const [pickRole, setPickRole] = useState<UserDoc['role'] | 'all'>('all');
+  const [pickAssignee, setPickAssignee] = useState<string | null>(null);
+
+  // permissions helper
+  const canAssignAnyone = isOwner || me?.role === 'project_manager';
 
   // watch auth -> me
   useEffect(() => {
@@ -190,6 +198,40 @@ export default function ProjectPage() {
     };
   }, [project?.members]);
 
+  // role + user catalogs
+  const roleOptions = useMemo(() => {
+    const set = new Set<UserDoc['role']>();
+    Object.values(teamUsers).forEach((u) => u?.role && set.add(u.role));
+    return Array.from(set);
+  }, [teamUsers]);
+
+  const usersByRole = useMemo(() => {
+    const map: Record<string, Array<{ uid: string; user: UserDoc }>> = {};
+    (project?.members || []).forEach((uid) => {
+      const u = teamUsers[uid];
+      if (!u) return;
+      const r = (u.role || '—') as string;
+      if (!map[r]) map[r] = [];
+      map[r].push({ uid, user: u });
+    });
+    return map;
+  }, [project?.members, teamUsers]);
+
+  const assigneeCandidates = useMemo(() => {
+    if (pickRole === 'all') {
+      return (project?.members || [])
+        .map((uid) => ({ uid, user: teamUsers[uid] }))
+        .filter((x) => !!x.user) as Array<{ uid: string; user: UserDoc }>;
+    }
+    return usersByRole[pickRole || ''] || [];
+  }, [pickRole, project?.members, teamUsers, usersByRole]);
+
+  useEffect(() => {
+    if (!pickAssignee && assigneeCandidates.length) {
+      setPickAssignee(assigneeCandidates[0].uid);
+    }
+  }, [assigneeCandidates, pickAssignee]);
+
   const tasksBy = useMemo(() => {
     return {
       todo: tasks.filter((t) => t.status === 'todo'),
@@ -202,6 +244,14 @@ export default function ProjectPage() {
     if (!project || !me) return;
     const title = newTitle.trim();
     if (!title) return;
+
+    const assigneeUid = pickAssignee || me.uid;
+
+    if (!project.members?.includes(assigneeUid)) {
+      toast.error('Assignee must be a project member');
+      return;
+    }
+
     try {
       await addDoc(collection(db, 'projects', project.id, 'tasks'), {
         title,
@@ -209,7 +259,7 @@ export default function ProjectPage() {
         status: 'todo',
         createdAt: serverTimestamp(),
         createdBy: me.uid,
-        assignee: me.uid, // default assign to creator (adjust if you add picker)
+        assignee: assigneeUid,
       });
       setNewTitle('');
       setNewDesc('');
@@ -230,6 +280,31 @@ export default function ProjectPage() {
     try {
       await updateDoc(doc(db, 'projects', project.id, 'tasks', id), { status });
       toast.success('Status updated');
+    } catch (e: any) {
+      console.error(e);
+      toast.error(e?.message || 'Failed to update');
+    }
+  }
+
+  async function setTaskAssignee(id: string, newUid: string) {
+    if (!project || !me) return;
+
+    const t = tasks.find((x) => x.id === id);
+    const creatorId = t?.createdBy;
+    const allowed = canAssignAnyone || creatorId === me.uid;
+    if (!allowed) {
+      toast.error('Only owner, project manager, or task creator can reassign');
+      return;
+    }
+
+    if (!project.members?.includes(newUid)) {
+      toast.error('Assignee must be a project member');
+      return;
+    }
+
+    try {
+      await updateDoc(doc(db, 'projects', project.id, 'tasks', id), { assignee: newUid });
+      toast.success('Assignee updated');
     } catch (e: any) {
       console.error(e);
       toast.error(e?.message || 'Failed to update');
@@ -371,6 +446,48 @@ export default function ProjectPage() {
                 <CardContent className="space-y-3">
                   <Input placeholder="Title" value={newTitle} onChange={(e) => setNewTitle(e.target.value)} />
                   <Textarea placeholder="Description (optional)" value={newDesc} onChange={(e) => setNewDesc(e.target.value)} />
+
+                  {/* Role → User assignment controls */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label>Assign by role</Label>
+                      <Select value={pickRole || 'all'} onValueChange={(v) => setPickRole(v as any)}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="All roles" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All roles</SelectItem>
+                          {roleOptions.map((r) => (
+                            <SelectItem key={r} value={r!}>
+                              {String(r || '—').replace('_', ' ')}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label>Assign to</Label>
+                      <Select
+                        value={pickAssignee ?? undefined}
+                        onValueChange={(v) => setPickAssignee(v)}
+                        disabled={assigneeCandidates.length === 0}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder={assigneeCandidates.length ? 'Select user' : 'No users'} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {assigneeCandidates.map(({ uid, user }) => (
+                            <SelectItem key={uid} value={uid}>
+                              {(user.displayName || user.email || 'User') +
+                                (user.role ? ` — ${user.role.replace('_', ' ')}` : '')}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
                   <Button onClick={createTask}>Create</Button>
                 </CardContent>
               </Card>
@@ -387,12 +504,18 @@ export default function ProjectPage() {
                       ) : (
                         tasksBy[col].map((t) => {
                           const creator = teamUsers[t.createdBy];
+                          const assigneeUser = t.assignee ? teamUsers[t.assignee] : undefined;
                           const canChange = isOwner || t.createdBy === me?.uid;
                           return (
                             <div key={t.id} className="border rounded p-3">
                               <div className="flex items-start justify-between gap-3">
                                 <div className="min-w-0">
-                                  <div className="font-medium truncate">{t.title}</div>
+                                  <div className="font-medium truncate">
+                                    {t.title}
+                                    {!t.assignee && (
+                                      <Badge variant="secondary" className="ml-2">Unassigned</Badge>
+                                    )}
+                                  </div>
                                   {t.description ? (
                                     <div className="text-xs text-muted-foreground line-clamp-2">{t.description}</div>
                                   ) : null}
@@ -408,6 +531,51 @@ export default function ProjectPage() {
                                     <span className="text-xs text-muted-foreground">
                                       {creator?.displayName || creator?.email || 'User'}
                                     </span>
+                                  </div>
+
+                                  {/* Assigned to */}
+                                  <div className="mt-2 flex items-center gap-2">
+                                    <span className="text-xs text-muted-foreground">Assigned to:</span>
+
+                                    {!(canAssignAnyone || t.createdBy === me?.uid) ? (
+                                      <>
+                                        <Avatar className="h-6 w-6">
+                                          {assigneeUser?.photoURL ? (
+                                            <AvatarImage
+                                              src={assigneeUser.photoURL}
+                                              alt={assigneeUser.displayName || assigneeUser.email || 'User'}
+                                            />
+                                          ) : null}
+                                          <AvatarFallback>
+                                            {initials(assigneeUser?.displayName, assigneeUser?.email)}
+                                          </AvatarFallback>
+                                        </Avatar>
+                                        <span className="text-xs text-muted-foreground">
+                                          {assigneeUser?.displayName || assigneeUser?.email || 'Unassigned'}
+                                        </span>
+                                      </>
+                                    ) : (
+                                      <Select
+                                        value={t.assignee ?? undefined}
+                                        onValueChange={(v) => setTaskAssignee(t.id, v)}
+                                      >
+                                        <SelectTrigger className="h-7 w-[220px]">
+                                          <SelectValue placeholder="Select assignee" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          {(project.members || []).map((uid) => {
+                                            const u = teamUsers[uid];
+                                            if (!u) return null;
+                                            return (
+                                              <SelectItem key={uid} value={uid}>
+                                                {(u.displayName || u.email || 'User') +
+                                                  (u.role ? ` — ${u.role.replace('_', ' ')}` : '')}
+                                              </SelectItem>
+                                            );
+                                          })}
+                                        </SelectContent>
+                                      </Select>
+                                    )}
                                   </div>
                                 </div>
                                 <div className="flex flex-col gap-1 shrink-0">
