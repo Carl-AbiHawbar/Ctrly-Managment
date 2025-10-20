@@ -6,6 +6,7 @@ import {
   collectionGroup,
   doc,
   getDoc,
+  getDocs,
   onSnapshot,
   orderBy,
   query,
@@ -34,9 +35,9 @@ type TaskDoc = {
   status: TaskStatus;
   createdAt?: any;
   createdBy?: string;
-  assignedTo?: string;
-  orgId?: string;
-  projectId: string; // derived from parent
+  assignee?: string;   // unified name
+  orgId?: string;      // required for owner view
+  projectId: string;   // derived from parent
 };
 
 type ProjectInfo = {
@@ -54,10 +55,9 @@ export default function MyTasksPage() {
 
   const [tasks, setTasks] = useState<TaskDoc[]>([]);
   const [projectsMap, setProjectsMap] = useState<Record<string, ProjectInfo>>({});
-
   const [qText, setQText] = useState("");
 
-  // auth + my user doc
+  // Watch auth state
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (u) => {
       if (!u) {
@@ -79,17 +79,16 @@ export default function MyTasksPage() {
     return () => unsub();
   }, []);
 
-  // stream tasks (owner => all org, else => assignedTo me + createdBy me)
+  // Stream tasks (owner => all org, else => only assigned to me)
   useEffect(() => {
     if (!me?.uid) return;
 
     setLoading(true);
-    const base = collectionGroup(db, "tickets");
+    const base = collectionGroup(db, "tasks");
 
-    let unsub1: undefined | (() => void);
-    let unsub2: undefined | (() => void);
+    let unsub: undefined | (() => void);
+    let hasRetriedWithoutOrder = false; // prevent infinite loops
 
-    // helper to map docs to TaskDoc
     const mapDocs = (docs: QueryDocumentSnapshot<DocumentData>[]) =>
       docs.map((d) => {
         const projectId = d.ref.parent.parent?.id || "";
@@ -101,74 +100,72 @@ export default function MyTasksPage() {
           status: (data.status || "todo") as TaskStatus,
           createdAt: data.createdAt,
           createdBy: data.createdBy,
-          assignedTo: data.assignedTo,
+          assignee: data.assignee,
           orgId: data.orgId,
           projectId,
         } as TaskDoc;
       });
 
-    // keep both result sets (for non-owners)
-    let setA: TaskDoc[] = [];
-    let setB: TaskDoc[] = [];
-
-    const mergeAndSet = (arrA: TaskDoc[], arrB: TaskDoc[]) => {
-      const merged: Record<string, TaskDoc> = {};
-      [...arrA, ...arrB].forEach((t) => (merged[t.id + "::" + t.projectId] = t));
-      const rows = Object.values(merged);
-      setTasks(rows);
-      // fetch project names/logos for display
+    const fetchMissingProjectInfo = async (rows: TaskDoc[]) => {
       const needed = Array.from(new Set(rows.map((t) => t.projectId))).filter(
         (pid) => pid && !projectsMap[pid]
       );
-      if (needed.length) {
-        Promise.all(
-          needed.map(async (pid) => {
-            try {
-              const pSnap = await getDoc(doc(db, "projects", pid));
-              if (pSnap.exists()) {
-                const d = pSnap.data() as any;
-                return { pid, name: d.name || "Untitled project", logoUrl: d.logoUrl || "" };
-              }
-            } catch {
-              // ignore
+      if (!needed.length) return;
+
+      // Batch fetch project docs
+      const updates: Record<string, ProjectInfo> = {};
+      await Promise.all(
+        needed.map(async (pid) => {
+          try {
+            const pSnap = await getDoc(doc(db, "projects", pid));
+            if (pSnap.exists()) {
+              const d = pSnap.data() as any;
+              updates[pid] = { id: pid, name: d.name || "Untitled project", logoUrl: d.logoUrl || "" };
             }
-            return null;
-          })
-        ).then((infos) => {
-          const updates: Record<string, ProjectInfo> = {};
-          infos.forEach((it) => {
-            if (it) updates[it.pid] = { id: it.pid, name: it.name, logoUrl: it.logoUrl };
-          });
-          if (Object.keys(updates).length) setProjectsMap((m) => ({ ...m, ...updates }));
-          setLoading(false);
-        });
-      } else {
-        setLoading(false);
+          } catch {
+            // ignore failures per project
+          }
+        })
+      );
+      if (Object.keys(updates).length) {
+        setProjectsMap((m) => ({ ...m, ...updates }));
       }
     };
 
-    const startOwnerStream = (useNoOrder = false) => {
-      let qy =
+    const startStream = (noOrder = false) => {
+      // Build query based on role
+      const qy =
         me.role === "owner" && me.orgId
-          ? useNoOrder
+          ? noOrder
             ? query(base, where("orgId", "==", me.orgId))
             : query(base, where("orgId", "==", me.orgId), orderBy("createdAt", "desc"))
-          : null;
+          : noOrder
+            ? query(base, where("assignee", "==", me.uid))
+            : query(base, where("assignee", "==", me.uid), orderBy("createdAt", "desc"));
 
-      if (!qy) return;
+      // Close previous listener (if any) before opening a new one
+      unsub?.();
 
-      unsub1 = onSnapshot(
+      unsub = onSnapshot(
         qy,
-        (snap) => {
+        async (snap) => {
           const rows = mapDocs(snap.docs);
-          setA = rows;
-          mergeAndSet(rows, []);
+
+          // Debug: verify fields coming back
+          // console.log(`[MyTasksPage] role=${me.role} orgId=${me.orgId} rows=${rows.length}`, rows.slice(0,3).map(r => ({id:r.id, projectId:r.projectId, assignee:r.assignee, orgId:r.orgId})));
+
+          setTasks(rows);
+          await fetchMissingProjectInfo(rows);
+          setLoading(false);
         },
         (err: any) => {
-          // index missing fallback
-          if (err?.code === "failed-precondition" && String(err?.message || "").includes("create it here")) {
-            console.warn("Missing index for tasks(orgId + createdAt). Retrying without orderBy.");
-            startOwnerStream(true);
+          // If composite index missing, retry once without orderBy
+          const needsIndex =
+            err?.code === "failed-precondition" && String(err?.message || "").includes("create it here");
+          if (!noOrder && !hasRetriedWithoutOrder && needsIndex) {
+            console.warn("Missing index for tasks. Retrying without orderBy.");
+            hasRetriedWithoutOrder = true;
+            startStream(true);
             return;
           }
           console.error(err);
@@ -178,68 +175,13 @@ export default function MyTasksPage() {
       );
     };
 
-    const startMemberStreams = (useNoOrder = false) => {
-      // A) assigned to me
-      let qa = useNoOrder
-        ? query(base, where("assignedTo", "==", me.uid))
-        : query(base, where("assignedTo", "==", me.uid), orderBy("createdAt", "desc"));
+    startStream(false);
 
-      // B) created by me (safety net if assignedTo wasn't set)
-      let qb = useNoOrder
-        ? query(base, where("createdBy", "==", me.uid))
-        : query(base, where("createdBy", "==", me.uid), orderBy("createdAt", "desc"));
-
-      unsub1 = onSnapshot(
-        qa,
-        (snap) => {
-          setA = mapDocs(snap.docs);
-          mergeAndSet(setA, setB);
-        },
-        (err: any) => {
-          if (err?.code === "failed-precondition" && String(err?.message || "").includes("create it here")) {
-            console.warn("Missing index for tasks(assignedTo + createdAt). Retrying without orderBy.");
-            startMemberStreams(true);
-            return;
-          }
-          console.error(err);
-          toast.error("Failed to load tasks");
-          setLoading(false);
-        }
-      );
-
-      unsub2 = onSnapshot(
-        qb,
-        (snap) => {
-          setB = mapDocs(snap.docs);
-          mergeAndSet(setA, setB);
-        },
-        (err: any) => {
-          if (err?.code === "failed-precondition" && String(err?.message || "").includes("create it here")) {
-            console.warn("Missing index for tasks(createdBy + createdAt). Retrying without orderBy.");
-            startMemberStreams(true);
-            return;
-          }
-          console.error(err);
-          toast.error("Failed to load tasks");
-          setLoading(false);
-        }
-      );
-    };
-
-    if (me.role === "owner" && me.orgId) {
-      startOwnerStream(false);
-    } else {
-      startMemberStreams(false);
-    }
-
-    return () => {
-      unsub1?.();
-      unsub2?.();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => unsub?.();
+    // IMPORTANT: do NOT include projectsMap in deps to avoid resubscribing loops
   }, [me?.uid, me?.role, me?.orgId]);
 
-  // client-side text filter
+  // Client-side filter
   const filtered = useMemo(() => {
     if (!qText.trim()) return tasks;
     const ql = qText.toLowerCase();
@@ -260,7 +202,7 @@ export default function MyTasksPage() {
   async function setStatus(t: TaskDoc, status: TaskStatus) {
     try {
       if (!t.projectId || !t.id) return;
-      await updateDoc(doc(db, "projects", t.projectId, "tickets", t.id), { status });
+      await updateDoc(doc(db, "projects", t.projectId, "tasks", t.id), { status });
     } catch (e: any) {
       console.error(e);
       toast.error(e?.message || "Failed to update status");
@@ -273,7 +215,7 @@ export default function MyTasksPage() {
 
       <div className="lg:w-[calc(100%-16rem)] lg:ml-64 flex flex-col pt-16">
         <Topbar
-          name={me?.role === "owner" ? "All Tasks (Owner)" : "My Tasks"}
+          name={me?.role === "owner" ? "All Organization Tasks" : "My Assigned Tasks"}
           sidebarOpen={sidebarOpen}
           setSidebarOpen={setSidebarOpen}
         />
@@ -283,7 +225,7 @@ export default function MyTasksPage() {
             <Input
               placeholder={
                 me?.role === "owner"
-                  ? "Search tasks (title, description, project)…"
+                  ? "Search all tasks (title, description, project)…"
                   : "Search my tasks…"
               }
               value={qText}
@@ -296,25 +238,42 @@ export default function MyTasksPage() {
             <div className="p-6 text-sm text-muted-foreground">Loading tasks…</div>
           ) : filtered.length === 0 ? (
             <div className="p-6 text-sm text-muted-foreground">
-              {me?.role === "owner" ? "No tasks in your org yet." : "No tasks assigned to you yet."}
+              {me?.role === "owner"
+                ? "No tasks found in your organization."
+                : "No tasks assigned to you yet."}
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <Column title="To do" count={todo.length}>
                 {todo.map((t) => (
-                  <TaskItem key={t.id + t.projectId} task={t} project={projectsMap[t.projectId]} onSetStatus={setStatus} />
+                  <TaskItem
+                    key={t.id + t.projectId}
+                    task={t}
+                    project={projectsMap[t.projectId]}
+                    onSetStatus={setStatus}
+                  />
                 ))}
               </Column>
 
               <Column title="Doing" count={doing.length}>
                 {doing.map((t) => (
-                  <TaskItem key={t.id + t.projectId} task={t} project={projectsMap[t.projectId]} onSetStatus={setStatus} />
+                  <TaskItem
+                    key={t.id + t.projectId}
+                    task={t}
+                    project={projectsMap[t.projectId]}
+                    onSetStatus={setStatus}
+                  />
                 ))}
               </Column>
 
               <Column title="Done" count={done.length}>
                 {done.map((t) => (
-                  <TaskItem key={t.id + t.projectId} task={t} project={projectsMap[t.projectId]} onSetStatus={setStatus} />
+                  <TaskItem
+                    key={t.id + t.projectId}
+                    task={t}
+                    project={projectsMap[t.projectId]}
+                    onSetStatus={setStatus}
+                  />
                 ))}
               </Column>
             </div>
@@ -325,7 +284,15 @@ export default function MyTasksPage() {
   );
 }
 
-function Column({ title, count, children }: { title: string; count: number; children: React.ReactNode }) {
+function Column({
+  title,
+  count,
+  children,
+}: {
+  title: string;
+  count: number;
+  children: React.ReactNode;
+}) {
   return (
     <Card>
       <CardHeader>
@@ -366,13 +333,25 @@ function TaskItem({
       <Separator className="my-3" />
 
       <div className="flex items-center gap-2">
-        <Button size="sm" variant={task.status === "todo" ? "default" : "outline"} onClick={() => onSetStatus(task, "todo")}>
+        <Button
+          size="sm"
+          variant={task.status === "todo" ? "default" : "outline"}
+          onClick={() => onSetStatus(task, "todo")}
+        >
           To do
         </Button>
-        <Button size="sm" variant={task.status === "doing" ? "default" : "outline"} onClick={() => onSetStatus(task, "doing")}>
+        <Button
+          size="sm"
+          variant={task.status === "doing" ? "default" : "outline"}
+          onClick={() => onSetStatus(task, "doing")}
+        >
           Doing
         </Button>
-        <Button size="sm" variant={task.status === "done" ? "default" : "outline"} onClick={() => onSetStatus(task, "done")}>
+        <Button
+          size="sm"
+          variant={task.status === "done" ? "default" : "outline"}
+          onClick={() => onSetStatus(task, "done")}
+        >
           Done
         </Button>
       </div>

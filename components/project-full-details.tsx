@@ -19,7 +19,6 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 import { Calendar, Clock, FileText, CheckSquare, Users } from 'lucide-react';
-import { cn } from '@/lib/utils';
 
 // Firebase
 import { auth, db } from '@/firebase';
@@ -53,7 +52,7 @@ type ProjectDoc = {
   deadline?: string;
   startDate?: string;
   orgId?: string;
-  members?: string[]; // array of user uids
+  members?: string[];
   logoUrl?: string;
 };
 
@@ -63,8 +62,9 @@ type Task = {
   description?: string;
   status: 'todo' | 'doing' | 'done';
   createdAt?: any;
-  createdBy: string; // uid
-  assignee?: string; // uid
+  createdBy: string;
+  assignee?: string;
+  orgId?: string;
 };
 
 function initials(name?: string, email?: string) {
@@ -77,7 +77,7 @@ function initials(name?: string, email?: string) {
 
 export default function ProjectPage() {
   const router = useRouter();
-  const { id: projectId } = useParams<{ id: string }>(); // ✅ no sync-access warning
+  const { id: projectId } = useParams<{ id: string }>();
 
   // layout
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -86,13 +86,14 @@ export default function ProjectPage() {
   // auth + role
   const [me, setMe] = useState<UserDoc | null>(null);
   const isOwner = me?.role === 'owner';
+  const canAssignAnyone = isOwner || me?.role === 'project_manager';
 
   // data
   const [project, setProject] = useState<(ProjectDoc & { id: string }) | null>(null);
   const [teamUsers, setTeamUsers] = useState<Record<string, UserDoc>>({});
   const [loading, setLoading] = useState(true);
 
-  // unified tasks (used to be tickets)
+  // tasks
   const [tasks, setTasks] = useState<Task[]>([]);
   const [newTitle, setNewTitle] = useState('');
   const [newDesc, setNewDesc] = useState('');
@@ -100,9 +101,6 @@ export default function ProjectPage() {
   // assignment pickers
   const [pickRole, setPickRole] = useState<UserDoc['role'] | 'all'>('all');
   const [pickAssignee, setPickAssignee] = useState<string | null>(null);
-
-  // permissions helper
-  const canAssignAnyone = isOwner || me?.role === 'project_manager';
 
   // watch auth -> me
   useEffect(() => {
@@ -141,7 +139,7 @@ export default function ProjectPage() {
     return () => unsub();
   }, [projectId, router]);
 
-  // stream unified tasks
+  // stream tasks
   useEffect(() => {
     if (!project) return;
     let triedNoOrder = false;
@@ -152,15 +150,12 @@ export default function ProjectPage() {
       return onSnapshot(
         qy,
         (snap) => {
-          setTasks(
-            snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as Task[]
-          );
+          setTasks(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as Task[]);
         },
         (err) => {
-          // fallback if index missing
           if (!triedNoOrder && String(err?.message || '').includes('The query requires an index')) {
             triedNoOrder = true;
-            console.warn('Create Firestore index for tasks(createdAt). Falling back without order.');
+            console.warn('Missing Firestore index for tasks(createdAt). Retrying without orderBy.');
             unsub && unsub();
             unsub = start(true);
             return;
@@ -198,7 +193,7 @@ export default function ProjectPage() {
     };
   }, [project?.members]);
 
-  // role + user catalogs
+  // role options & candidates
   const roleOptions = useMemo(() => {
     const set = new Set<UserDoc['role']>();
     Object.values(teamUsers).forEach((u) => u?.role && set.add(u.role));
@@ -240,6 +235,7 @@ export default function ProjectPage() {
     };
   }, [tasks]);
 
+  // create task (adds orgId so owners can see it)
   async function createTask() {
     if (!project || !me) return;
     const title = newTitle.trim();
@@ -260,10 +256,11 @@ export default function ProjectPage() {
         createdAt: serverTimestamp(),
         createdBy: me.uid,
         assignee: assigneeUid,
+        orgId: project.orgId || me.orgId || null, // ✅ crucial for owner queries
       });
       setNewTitle('');
       setNewDesc('');
-      toast.success('Ticket/Task created');
+      toast.success('Task created');
     } catch (e: any) {
       console.error(e);
       toast.error(e?.message || 'Failed to create');
@@ -323,7 +320,6 @@ export default function ProjectPage() {
     );
   }
 
-  // safe display helpers
   const projectStatus = project.status || 'active';
   const progress = Math.round(project.progress || 0);
 
@@ -437,7 +433,7 @@ export default function ProjectPage() {
 
             {/* TASKS (unified) */}
             <TabsContent value="tasks" className="space-y-6">
-              {/* Anyone signed-in (and allowed by rules) can create */}
+              {/* Create */}
               <Card>
                 <CardHeader>
                   <CardTitle>Create Ticket / Task</CardTitle>
@@ -492,6 +488,7 @@ export default function ProjectPage() {
                 </CardContent>
               </Card>
 
+              {/* Columns */}
               <div className="grid md:grid-cols-3 gap-6">
                 {(['todo', 'doing', 'done'] as const).map((col) => (
                   <Card key={col}>
@@ -506,6 +503,7 @@ export default function ProjectPage() {
                           const creator = teamUsers[t.createdBy];
                           const assigneeUser = t.assignee ? teamUsers[t.assignee] : undefined;
                           const canChange = isOwner || t.createdBy === me?.uid;
+
                           return (
                             <div key={t.id} className="border rounded p-3">
                               <div className="flex items-start justify-between gap-3">
@@ -519,6 +517,8 @@ export default function ProjectPage() {
                                   {t.description ? (
                                     <div className="text-xs text-muted-foreground line-clamp-2">{t.description}</div>
                                   ) : null}
+
+                                  {/* Creator */}
                                   <div className="mt-2 flex items-center gap-2">
                                     <Avatar className="h-6 w-6">
                                       {creator?.photoURL ? (
@@ -578,6 +578,8 @@ export default function ProjectPage() {
                                     )}
                                   </div>
                                 </div>
+
+                                {/* Status buttons */}
                                 <div className="flex flex-col gap-1 shrink-0">
                                   {(['todo', 'doing', 'done'] as const).map((s) => (
                                     <Button
